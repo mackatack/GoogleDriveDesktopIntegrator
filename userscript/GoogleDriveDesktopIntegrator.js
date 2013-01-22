@@ -1,19 +1,38 @@
 // ==UserScript==
-// @name       		Google Drive Desktop Integration
-// @namespace  		http://use.i.E.your.homepage/
-// @version    		0.1
-// @description		UserScript to add a java-based desktop integrator to google drive
-//					This allows Google Drive users to click files in the online file browser
-// @require			http://ajax.googleapis.com/ajax/libs/jquery/1/jquery.min.js
-// @match      		https://drive.google.com/*
-// @copyright  		2013, mackatack@gmail.com
+// @name            Google Drive Desktop Integration
+// @namespace       https://github.com/mackatack/GoogleDriveDesktopIntegrator
+// @version         0.3
+// @description     UserScript to add a java-based desktop integrator to google drive
+//                  This allows Google Drive users to click files in the online file browser
+// @require         http://ajax.googleapis.com/ajax/libs/jquery/1/jquery.min.js
+// @match           https://drive.google.com/*
+// @copyright       2013, mackatack@gmail.com
 // ==/UserScript==
 
 jQuery.noConflict();
 
 (function($j){
 
-    var extentionRegexp = /\.(odt|ods|doc|docx|vsd|zip|xls)$/im;
+    var extentionRegexp = /\.(odt|ods|doc|docx|xls|xlsx|ppt|pptx|vsd|zip|ai|psd)$/im;
+
+    var applet = $j("<applet>").attr({
+        name: 'GoogleDriveDesktopIntegrator',
+        code: 'nl.org.mackatack.GoogleDriveDesktopIntegrator.IntegratorApplet',
+        scripable: 'true',
+        mayscript: 'true',
+        archive: 'https://github.com/mackatack/GoogleDriveDesktopIntegrator/blob/master/applet/jar/GoogleDriveIntegratorApplet.jar?raw=true&v=6'
+    }).css({
+        position: 'fixed',
+        top: '0px',
+        right: '0px',
+        width: '300px',
+        height: '24px'
+    });
+    $j('BODY').append(applet);
+    applet = applet.get(0);
+
+
+
 
     // Find the authentication token
     var authTokenVariable = null;
@@ -119,8 +138,6 @@ jQuery.noConflict();
 
         GM_log('received click for ' + docName);
 
-        findValues();
-
         // Lets see if it's any of the extentions we want to handle
         if (!extentionRegexp.test(docName)) return;
 
@@ -136,9 +153,16 @@ jQuery.noConflict();
             findParentPaths(docData, function(pathArrays) {
                 var paths = [];
                 $j(pathArrays).each(function(pNum, pathArray){
+                    delete pathArray[0];
+                    // TODO: Handle special chars in the filename
                     paths.push(pathArray.join('/'));
                 });
-                alert("Found the following paths to file " + docData.name + "\n\n" + paths.join("\n"));
+
+                console.log("Found the following paths to file " + docData.name + "\n\n" + paths.join("\n"));
+
+                // Use the applet to open the file
+                if (paths.length>0)
+                	applet.openFile(paths);
             });
         });
 

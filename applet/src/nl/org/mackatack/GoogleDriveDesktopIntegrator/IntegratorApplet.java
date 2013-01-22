@@ -2,8 +2,11 @@ package nl.org.mackatack.GoogleDriveDesktopIntegrator;
 
 
 import java.awt.FlowLayout;
+import java.io.File;
+
 import javax.swing.JApplet;
 import javax.swing.JLabel;
+
 
 /**
  * IntegratorApplet
@@ -22,8 +25,8 @@ import javax.swing.JLabel;
  */
 public class IntegratorApplet extends JApplet {
 
-	private static final long serialVersionUID = 8493678796429149417L;
-	String openFilename = null;
+	//private static final long serialVersionUID = 1L;
+	String[] openFilename = null;
 	Thread openThread = null;
 	Object openThreadLock = new Object();
 	JLabel lblStatus = new JLabel("GoogleDriveDesktopIntegrator");
@@ -42,11 +45,13 @@ public class IntegratorApplet extends JApplet {
 	 * Because of security restrictions Java doesn't allow us to run programs
 	 * from a tainted program path. We'll use a thread to perform the execute
 	 * statements for us.
+	 * A file could have multiple paths, so lets take them all and open the first one
+	 * we can find on the filesystem
 	 *
-	 * @param fileName 	Path to the file we want to open
+	 * @param fileName 	Paths to the file we want to open
 	 */
-	public void openFile(String fileName) {
-		setStatus("openFile("+fileName+") aangeroepen, notify thread");
+	public void openFile(String[] fileName) {
+		setStatus("openFile() called, notify thread");
 		synchronized (openThreadLock) {
 			// Save the unsafe filename so the thread can open it later
 			openFilename = fileName;
@@ -54,6 +59,13 @@ public class IntegratorApplet extends JApplet {
 			// Notify the openThread
 			openThreadLock.notifyAll();
 		}
+	}
+	
+	private boolean fileExists(File f) {
+		return f.exists();		
+	}
+	private boolean fileExists(String f) {
+		return fileExists(new File(f));		
 	}
 
 	/**
@@ -79,19 +91,42 @@ public class IntegratorApplet extends JApplet {
 						try {
 							// Just wait till openFile() is called and thus the notifyAll()
 							openThreadLock.wait();
-							setStatus("thread wakeup, opening " + openFilename);
+							setStatus("thread wakeup");
 
 							// Check the OS
 							String os = System.getProperty("os.name").toLowerCase();
-
-							// Windows? Lets's use cmd; Linux? use xdg-open
-							if (os.indexOf("win") >= 0)
-								Runtime.getRuntime().exec(new String[]{"cmd", "/c", openFilename});
-							else
-								Runtime.getRuntime().exec(new String[]{"xdg-open", openFilename});
-
-							// Done!
-							setStatus("done opening " + openFilename);
+							
+							// Find the users home dir
+							String home = System.getProperty("user.home") + "/Google Drive";
+							if (!fileExists(home)) {
+								System.out.println("Default homedir does not exist");								
+								home = "E:/Google Drive";
+							}
+							
+							// A file could have multiple paths, so lets try all of them and
+							// open the first file path we can find on the local filesystem
+							String localFile = null;
+							for(String fName: openFilename) {
+								localFile = home + "/" + fName;
+								System.out.println("Testing " + localFile);
+								if (fileExists(localFile))
+									continue;
+								localFile = null;								
+							}
+							
+							// Did we find any of the local paths?
+							if (localFile != null) {
+								// Windows? Lets's use cmd; Linux? use xdg-open
+								if (os.indexOf("win") >= 0)
+									Runtime.getRuntime().exec(new String[]{"cmd", "/c", localFile});
+								else
+									Runtime.getRuntime().exec(new String[]{"xdg-open", localFile});
+	
+								// Done!
+								setStatus("done opening " + localFile);
+							} else {
+								System.out.println("None of the paths could be found");								
+							}
 						} catch (Exception e) {
 							setStatus("Error: " + e.getMessage());
 							e.printStackTrace();
