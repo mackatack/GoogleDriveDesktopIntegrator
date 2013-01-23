@@ -1,11 +1,18 @@
 package nl.org.mackatack.GoogleDriveDesktopIntegrator;
 
 
+import java.awt.Color;
 import java.awt.FlowLayout;
 import java.io.File;
+import java.io.IOException;
 
 import javax.swing.JApplet;
 import javax.swing.JLabel;
+
+import netscape.javascript.JSException;
+import netscape.javascript.JSObject;
+
+
 
 
 /**
@@ -18,6 +25,10 @@ import javax.swing.JLabel;
  * This does however require you to already have the files synced locally using the Google Drive Application
  * 
  * So basically all this does is saving you the trouble of having to navigate your folders locally
+ * 
+ * Since Firefox doesn't allow us to call the java applet functions from javascript, but does allow us to call
+ * javascript methods from the applet, lets make a message poller. Lets check ask javascript if there's new data
+ * for us to handle at a small interval.
  *
  * @author Mackatack
  * @since 2013
@@ -25,120 +36,192 @@ import javax.swing.JLabel;
  */
 public class IntegratorApplet extends JApplet {
 
-	//private static final long serialVersionUID = 1L;
-	String[] openFilename = null;
-	Thread openThread = null;
-	Object openThreadLock = new Object();
-	JLabel lblStatus = new JLabel("GoogleDriveDesktopIntegrator");
+	private static final long serialVersionUID = -1399492154769974680L;
+	JLabel lblStatus = new JLabel("GoogleDriveDesktopIntegrator");	
+	MessagePoller poller = null;
 
 	/**
 	 * Output some status info
-	 *
 	 * @param text
 	 */
 	public void setStatus(String text) {
 		System.out.println(text);
 	}
-
-	/**
-	 * This public function will be exposed for use with javascript.
-	 * Because of security restrictions Java doesn't allow us to run programs
-	 * from a tainted program path. We'll use a thread to perform the execute
-	 * statements for us.
-	 * A file could have multiple paths, so lets take them all and open the first one
-	 * we can find on the filesystem
-	 *
-	 * @param fileName 	Paths to the file we want to open
-	 */
-	public void openFile(String[] fileName) {
-		setStatus("openFile() called, notify thread");
-		synchronized (openThreadLock) {
-			// Save the unsafe filename so the thread can open it later
-			openFilename = fileName;
-
-			// Notify the openThread
-			openThreadLock.notifyAll();
-		}
-	}
 	
 	private boolean fileExists(File f) {
-		return f.exists();		
+		return f.exists() || f.isFile() || f.getAbsoluteFile().isFile() || f.getAbsoluteFile().exists();	
 	}
 	private boolean fileExists(String f) {
 		return fileExists(new File(f));		
+	}
+	
+	@Override
+	public void stop() {
+		super.stop();
+		System.out.println("IntegratorApplet stop()");
+		if (poller != null) poller.requestStop();
+	}	
+	
+	@Override
+	public void start() {
+		super.start();		
+		System.out.println("IntegratorApplet start()");	
+	}
+	
+	/**
+	 * Open the file using cmd or xdg-open
+	 * @param file
+	 */
+	private void runFile(String file) {
+		// Check the OS
+		String os = System.getProperty("os.name").toLowerCase();
+		
+		try {
+			// Windows? Lets's use cmd; Linux? use xdg-open
+			if (os.indexOf("win") >= 0)
+				Runtime.getRuntime().exec(new String[]{"cmd", "/c", file});
+			else
+				Runtime.getRuntime().exec(new String[]{"xdg-open", file});
+		} catch (IOException e) {
+			System.out.println("Failed starting file");
+			e.printStackTrace();
+		}
+	}
+	
+	/**
+	 * Loop through all the available path names and open the first file
+	 * available on the filesystem
+	 * @param openFilenames
+	 * @return
+	 */
+	private boolean findFirstExistentPathAndRun(String openFilenames) {
+		// Find the users home dir
+		String home = System.getProperty("user.home") + "/Google Drive";
+		if (!fileExists(home)) {
+			System.out.println("Default homedir does not exist");								
+			home = "E:/Google Drive";
+		}
+		
+		// A file could have multiple paths, so lets try all of them and
+		// open the first file path we can find on the local filesystem
+		String localFile = null;
+		String[] fileNames = openFilenames.split("\n");
+		for(String fName: fileNames) {
+			localFile = home + fName;
+			System.out.println("Testing '" + localFile + "'");							
+			if (fileExists(localFile)) break;							
+			localFile = null;								
+		}
+		
+		// Did we find any of the local paths?
+		if (localFile != null) {
+			runFile(localFile);
+			setStatus("done opening " + localFile);
+			return true;
+		} else {
+			System.out.println("None of the paths could be found");
+			return false;
+		}
 	}
 
 	/**
 	 * Main constructor
 	 */
 	public IntegratorApplet() {
+		System.out.println("IntegratorApplet constructor");
+		
+		setBackground(Color.black);
+		getContentPane().setBackground(Color.black);
+		
 		// Add the status label to the interface
 		setLayout(new FlowLayout(FlowLayout.CENTER, 5, 5));
+		lblStatus.setForeground(Color.LIGHT_GRAY);
 		add(lblStatus);
-
-		/**
-		 * Since we're getting requests from the unsafe browser java doesn't allow us to
-		 * run system commands redirectly. We need a Thread to run the commands
-		 * 
-		 * TODO: create the thread statically, so multiple instances of the applet share this thread.
-		 */
-		openThread = new Thread(new Runnable() {
-			@Override
-			public void run() {
-				synchronized (openThreadLock) {
-					// Just leave the thread running forever
-					while(true) {
-						try {
-							// Just wait till openFile() is called and thus the notifyAll()
-							openThreadLock.wait();
-							setStatus("thread wakeup");
-
-							// Check the OS
-							String os = System.getProperty("os.name").toLowerCase();
-							
-							// Find the users home dir
-							String home = System.getProperty("user.home") + "/Google Drive";
-							if (!fileExists(home)) {
-								System.out.println("Default homedir does not exist");								
-								home = "E:/Google Drive";
-							}
-							
-							// A file could have multiple paths, so lets try all of them and
-							// open the first file path we can find on the local filesystem
-							String localFile = null;
-							for(String fName: openFilename) {
-								localFile = home + "/" + fName;
-								System.out.println("Testing " + localFile);
-								if (fileExists(localFile))
-									continue;
-								localFile = null;								
-							}
-							
-							// Did we find any of the local paths?
-							if (localFile != null) {
-								// Windows? Lets's use cmd; Linux? use xdg-open
-								if (os.indexOf("win") >= 0)
-									Runtime.getRuntime().exec(new String[]{"cmd", "/c", localFile});
-								else
-									Runtime.getRuntime().exec(new String[]{"xdg-open", localFile});
-	
-								// Done!
-								setStatus("done opening " + localFile);
-							} else {
-								System.out.println("None of the paths could be found");								
-							}
-						} catch (Exception e) {
-							setStatus("Error: " + e.getMessage());
-							e.printStackTrace();
-						}
-					}
-				}
-			}
-		});
-		// Set the thread type to Daemon, so it doesn't block the applet from closing
-		openThread.setDaemon(true);
 		
-		// Start the thread.
-		openThread.start();
+		poller = new MessagePoller();		
+	}
+	
+	/**
+	 * A wrapper function that makes it easier for us to perform javascript function calls
+	 * @param functionName
+	 * @param args
+	 * @return
+	 */
+	public Object doJavascriptCall(String functionName, Object[] args) {
+		if (args == null)
+			args = new Object[]{};
+		try {
+			System.out.println("doJavascriptCall: " + functionName);
+			JSObject window = JSObject.getWindow(IntegratorApplet.this);
+			return window.call(functionName, args);			
+		} catch(Exception e) {
+			System.out.println("doJavascriptCall error: " + e.toString());
+			e.printStackTrace();
+			return null;
+		}
+	}	
+
+	/**
+	 * This thread periodically checks if there's something for us to open
+	 * This is done by calling the GoogleDriveDesktopIntegratorPoll javascript function
+	 * this function returns a String or Null. If not null the string contains a linebreak
+	 * separated list of paths leading to the file the user wants to open
+	 * @author Mackatack
+	 *
+	 */
+	class MessagePoller extends Thread {
+		boolean stop = false;
+		public MessagePoller() {
+			setDaemon(true);
+			start();
+		}
+		public void requestStop() {
+			stop = true;
+		}
+		@Override
+		public void run() {
+			System.out.println("MessagePoller thread started");
+			
+			// Lets first tell javascript that we're up and running by
+			// calling the GoogleDriveDesktopIntegratorInit javascript function
+			doJavascriptCall("GoogleDriveDesktopIntegratorInit", null);
+			
+			// Keep looping
+			while(!stop) {
+				
+				// call the GoogleDriveDesktopIntegratorPoll javascript function and see
+				// if there's something for us to open
+				try {
+					Object path = doJavascriptCall("GoogleDriveDesktopIntegratorPoll", null);
+					
+					// We've got a file path from the server
+					if (path != null) {
+						System.out.println("message poller found: " + String.valueOf(path));
+						
+						// Try to open the first file we find in the path list
+						if (findFirstExistentPathAndRun(String.valueOf(path))) {
+							// Let javascript know we were able to open the file successfully
+							doJavascriptCall("GoogleDriveDesktopIntegratorSuccess", null);
+						} else {
+							// Let javascript know we were unable to open the file
+							doJavascriptCall("GoogleDriveDesktopIntegratorFail", null);
+						}						
+					}
+				} catch (JSException jsE) {
+					System.out.println("Stopping poller due to javascript error: " + jsE.toString());
+					jsE.printStackTrace();
+					break;				
+				} catch(Exception e) {
+					System.out.println("GoogleDriveDesktopIntegratorPoll error: " + e.toString());
+					e.printStackTrace();
+				}
+				
+				// Sleep one second until polling again
+				try {
+					Thread.sleep(1000);
+				} catch (InterruptedException e) {}				
+			}
+			System.out.println("MessagePoller thread stopped");
+		}
 	}
 }
