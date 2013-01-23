@@ -1,38 +1,85 @@
 // ==UserScript==
 // @name            Google Drive Desktop Integration
 // @namespace       https://github.com/mackatack/GoogleDriveDesktopIntegrator
-// @version         0.3
+// @version         0.8
 // @description     UserScript to add a java-based desktop integrator to google drive
 //                  This allows Google Drive users to click files in the online file browser
 // @require         http://ajax.googleapis.com/ajax/libs/jquery/1/jquery.min.js
 // @match           https://drive.google.com/*
+// @run-at          document-end
 // @copyright       2013, mackatack@gmail.com
+// @updateURL       http://userscripts.org/scripts/source/157242.meta.js
 // ==/UserScript==
+
+// Google drive has a few Iframes, check if we're the toplevel window
+if (window.parent == null || window.parent==window)
+	console.log("GoogleDriveDesktopIntegrator userScript initializing");
+else {
+	console.log("GoogleDriveDesktopIntegrator not loading, iFrame detected");
+	return;
+}
 
 jQuery.noConflict();
 
-(function($j){
+(function($j) {
 
-    var extentionRegexp = /\.(odt|ods|doc|docx|xls|xlsx|ppt|pptx|vsd|zip|ai|psd)$/im;
+	var extentionRegexp = /\.(odt|ods|doc|docx|xls|xlsx|ppt|pptx|vsd|zip|ai|psd)$/im;
 
-    var applet = $j("<applet>").attr({
+	// This array holds all the paths the java applet needs to open
+	var pollerArray = [];
+
+	// This boolean holds whether or not the applet has been started
+	var integratorAppletStarted = false;
+
+	// Make a list of functions we wish the expose to the applet
+	var gdriveIntegratorFuncs = {
+
+		// The Java applet calls this function on successfull initialization
+		GoogleDriveDesktopIntegratorInit: function() {
+			integratorAppletStarted = true;
+			console.log("GoogleDriveDesktopIntegratorInit called");
+		},
+
+		// The applet is asking us if we have some files we might want to open
+		// Just return the first value of the pollerArray
+		GoogleDriveDesktopIntegratorPoll: function() {
+			integratorAppletStarted = true;
+			return pollerArray.pop();
+		},
+
+		// The applet was able to open the file
+		GoogleDriveDesktopIntegratorSuccess: function() {
+		},
+
+		// The applet was unable to open the file
+		GoogleDriveDesktopIntegratorFail: function() {
+			// Dont't block the java applet, start the popup in a thread
+			setTimeout(function(){
+				alert("Unable to open the file you selected, please make sure it's synched locally!");
+			},10);
+		}
+	};
+
+	// Register the functions in the window and unsafeWindow
+	for(fName in gdriveIntegratorFuncs) {
+		window[fName] = gdriveIntegratorFuncs[fName];
+		unsafeWindow[fName] = gdriveIntegratorFuncs[fName];
+	}
+
+    // Lets start the applet
+    var docintegrator = $j("<applet id='docintegrator' scripable=true mayscript=true>").attr({
         name: 'GoogleDriveDesktopIntegrator',
         code: 'nl.org.mackatack.GoogleDriveDesktopIntegrator.IntegratorApplet',
-        scripable: 'true',
-        mayscript: 'true',
-        archive: 'https://github.com/mackatack/GoogleDriveDesktopIntegrator/blob/master/applet/jar/GoogleDriveIntegratorApplet.jar?raw=true&v=6'
+        archive: 'https://github.com/mackatack/GoogleDriveDesktopIntegrator/blob/master/applet/jar/GoogleDriveIntegratorApplet.jar?raw=true&v=8'
     }).css({
-        position: 'fixed',
+        width: '250px',
+        height: '24px',
+		position: 'absolute',
         top: '0px',
         right: '0px',
-        width: '300px',
-        height: '24px'
+		'z-index': '1000'
     });
-    $j('BODY').append(applet);
-    applet = applet.get(0);
-
-
-
+    $j('BODY').append(docintegrator);
 
     // Find the authentication token
     var authTokenVariable = null;
@@ -141,6 +188,13 @@ jQuery.noConflict();
         // Lets see if it's any of the extentions we want to handle
         if (!extentionRegexp.test(docName)) return;
 
+		// Lets first see if the applet has been started successfully, if not
+		// show an error popup
+		if (!integratorAppletStarted) {
+			alert("GoogleDriveDesktopIntegrator was unable to open the file, java applet not started!");
+			return false;
+		}
+
         // Find the documentID by manipulating the DOMElement's ID a little
         var docID = linkObject.id.replace(/^.*\./g, "");
 
@@ -160,9 +214,9 @@ jQuery.noConflict();
 
                 console.log("Found the following paths to file " + docData.name + "\n\n" + paths.join("\n"));
 
-                // Use the applet to open the file
+				// Use the applet to open the file
                 if (paths.length>0)
-                	applet.openFile(paths);
+                	pollerArray.push(paths.join("\n"));
             });
         });
 
@@ -189,5 +243,4 @@ jQuery.noConflict();
 
     // Initial hooking of the file tables
     hookTables();
-
 })(jQuery);
